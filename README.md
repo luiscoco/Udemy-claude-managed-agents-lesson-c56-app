@@ -42,28 +42,76 @@ CLAUDE_MANAGED_ENVIRONMENT_ID=your_environment_id
 PORT=3056
 ```
 
-## How the application was developed
+## How the app was build
 
-The browser collects inputs; the Node host validates requests; the lesson implementation produces observable evidence. The architecture page walks through the real source with numbered steps, prerequisite configuration, source filenames and code excerpts.
+### 1. Validate the trigger resource before admission
 
-### Lesson implementation
+The event ID must fit a bounded grammar and the resource must be in the local allowlist. The sample assumes the fixed demo issuer; a real entry point must authenticate that issuer first.
 
-[src/lesson.ts](https://github.com/luiscoco/Udemy-claude-managed-agents-lesson-c56-app/blob/main/src/lesson.ts)
+Source: [src/lesson.ts](src/lesson.ts#L13) · selected statements
 
 ```typescript
-  async run(input) {
+const eventId = text(input, "eventId"),
+  resourceId = text(input, "resourceId");
 
-const eventId=text(input,"eventId"),resourceId=text(input,"resourceId");if(!/^[A-Za-z0-9_-]{1,100}$/.test(eventId))throw new Error("Invalid event ID");
-if(!["doc-1","doc-2"].includes(resourceId))return report("rejected","Trigger resource is not authorized",{jobs:0},["Authenticate the issuer","Check the host resource allowlist"]);
-const key=JSON.stringify(["demo-tenant","trusted-demo-issuer",eventId]);
-if(resourceId!==text(input,"replayResourceId"))return report("conflict","A stable event key was replayed with different content",{jobs:1,key},["Claim one inbox record","Reject a conflicting replay"]);
-return report("passed","Admitted one job for repeated identical delivery",{jobs:1,key,phase:"queued",providerSessionsCreated:0},["Authorize the trigger resource","Deduplicate by tenant, issuer and event","Persist the job before dispatch","Reconcile uncertain creation before retry"]);
+if (!/^[A-Za-z0-9_-]{1,100}$/.test(eventId)) throw new Error("Invalid event ID");
 
-  }
-};
+if (!["doc-1", "doc-2"].includes(resourceId))
+  return report("rejected", "Trigger resource is not authorized", { jobs: 0 }, [
+    "Authenticate the issuer",
+    "Check the host resource allowlist",
+  ]);
 ```
 
-Read the architecture page for the remaining source excerpts and explanations, including input handling and optional provider behavior. The diagram describes this application, rather than implying that an external integration has been implemented.
+### 2. Detect content conflicts under a stable event key
+
+The key combines tenant, issuer and event ID. A replay for different content produces conflict; an identical replay reports one queued job with providerSessionsCreated:0. The reducer does not persist a real inbox or dispatch a session.
+
+Source: [src/lesson.ts](src/lesson.ts#L15) · selected statements
+
+```typescript
+const key = JSON.stringify(["demo-tenant", "trusted-demo-issuer", eventId]);
+
+if (resourceId !== text(input, "replayResourceId"))
+  return report(
+    "conflict",
+    "A stable event key was replayed with different content",
+    { jobs: 1, key },
+    ["Claim one inbox record", "Reject a conflicting replay"],
+  );
+
+return report(
+  "passed",
+  "Admitted one job for repeated identical delivery",
+  { jobs: 1, key, phase: "queued", providerSessionsCreated: 0 },
+  [
+    "Authorize the trigger resource",
+    "Deduplicate by tenant, issuer and event",
+    "Persist the job before dispatch",
+    "Reconcile uncertain creation before retry",
+  ],
+);
+```
+
+### Check your understanding
+
+Run **Deduplicate an identical trigger** in the application. Compare the result with these scenario expectations:
+
+```json
+{
+  "input": {
+    "eventId": "upload-1",
+    "resourceId": "doc-1",
+    "replayResourceId": "doc-1"
+  },
+  "expectedOutcome": "passed",
+  "checkEvidence": {
+    "jobs": 1
+  }
+}
+```
+
+Then try **Reject a conflicting trigger replay**. Its expected outcome is `conflict`; identify the condition or evidence field that explains the difference.
 
 ## Validation
 
