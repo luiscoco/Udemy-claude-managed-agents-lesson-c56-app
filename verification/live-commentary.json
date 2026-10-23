@@ -1,0 +1,29 @@
+{
+  "source": "live-provider-commentary",
+  "sessionId": "sesn_01EytWhHnEVNdQp5rMX9vJVh",
+  "answer": "**Lesson: Durable, Scheduled and Event-driven Agents**\n\nThis experiment demonstrates idempotent job admission: when a trigger arrives, it is authorized, then deduplicated using a composite key of tenant, issuer, and event ID, so only one job is ever queued regardless of how many times the same event is submitted. The job is persisted before any dispatch attempt, and a reconciliation step handles uncertainty on retry, ensuring exactly-one delivery semantics. The local run confirmed a single job was queued with no provider sessions created, meaning deduplication held and no downstream work was triggered prematurely.",
+  "stopReason": "end_turn",
+  "eventTypes": [
+    "session.status_running",
+    "session.thread_status_running",
+    "user.message",
+    "span.model_request_start",
+    "agent.thinking",
+    "agent.message",
+    "span.model_request_end",
+    "session.thread_status_idle",
+    "session.usage",
+    "session.status_idle"
+  ],
+  "requestUsage": [
+    {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 620,
+      "output_tokens": 167,
+      "speed": "standard"
+    }
+  ],
+  "experimentHash": "3d75b0f0f99a08f2da17b057a0aec0aa3e670d5b66315d5698228b3926617be5",
+  "scope": "A real text-only model response about the local experiment. External integrations and the experiment's correctness are not certified by this response."
+}

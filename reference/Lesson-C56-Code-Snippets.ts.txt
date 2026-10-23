@@ -1,0 +1,71 @@
+// Background trigger ledger and recovery illustration. No live calls on import.
+import { z } from "zod";
+import type Anthropic from "@anthropic-ai/sdk";
+import type { BetaManagedAgentsSessionEvent as Event } from "@anthropic-ai/sdk/resources/beta/sessions/events";
+const Trigger = z.strictObject({ eventId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/),
+  type: z.literal("document.uploaded"), resourceId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) });
+export type Job = { key: string; tenantId: string; issuer: string; trigger: z.infer<typeof Trigger>;
+  phase: "queued" | "creating" | "created" | "dispatched" | "uncertain"; sessionId?: string };
+export function ingest(raw: unknown, trusted: { tenantId: string; issuer: string; allowedResources: ReadonlySet<string> },
+  jobs: Map<string, Job>) {
+  const trigger = Trigger.parse(raw);
+  if (!trusted.allowedResources.has(trigger.resourceId)) throw new Error("Resource not authorized");
+  const key = JSON.stringify([trusted.tenantId, trusted.issuer, trigger.eventId]);
+  const old = jobs.get(key);
+  if (old) {
+    if (JSON.stringify(old.trigger) !== JSON.stringify(trigger)) throw new Error("Conflicting replay");
+    return old;
+  }
+  const job: Job = { key, tenantId: trusted.tenantId, issuer: trusted.issuer, trigger, phase: "queued" };
+  jobs.set(key, job); return job;
+}
+export async function dispatch(client: Anthropic, job: Job,
+  config: { agentId: string; version: number; environmentId: string }, signal: AbortSignal) {
+  if (job.phase !== "queued") throw new Error("Job already claimed");
+  job.phase = "creating";
+  let stopLocal: (() => void) | undefined;
+  try {
+    const session = await client.beta.sessions.create({ agent: { type: "agent", id: config.agentId, version: config.version },
+      environment_id: config.environmentId, metadata: { trigger_key: job.trigger.eventId },
+      budget: { type: "limit", max_list_cost: { amount: "25", currency: "USD" } }
+    }, { maxRetries: 0, timeout: 10000, signal });
+    job.sessionId = session.id; job.phase = "created";
+    const stream = await client.beta.sessions.events.stream(session.id, {}, { signal, timeout: 60000 });
+    stopLocal = () => stream.controller.abort();
+    const text = JSON.stringify({ task: "Process the authorized document upload",
+      resourceId: job.trigger.resourceId, eventId: job.trigger.eventId });
+    await client.beta.sessions.events.send(session.id, { events: [{ type: "user.message", content: [{ type: "text", text }] }]
+    }, { maxRetries: 0, timeout: 10000, signal });
+    job.phase = "dispatched";
+    return { sessionId: session.id, stream }; // Background worker owns stream lifetime.
+  } catch (error) { stopLocal?.(); job.phase = "uncertain"; throw error; }
+}
+export async function recover(client: Anthropic, sessionId: string, signal: AbortSignal,
+  persistCanonical: (event: Event) => Promise<void>) {
+  const stream = await client.beta.sessions.events.stream(sessionId, {}, { signal, timeout: 60000 });
+  const seen = new Set<string>(); let count = 0;
+  try {
+    // Open/buffer live first, then list every history page. Durable sink dedupes restarts.
+    for await (const event of client.beta.sessions.events.list(sessionId, {}, { signal, timeout: 10000 })) {
+      if (++count > 1000) throw new Error("History window limit; coverage incomplete");
+      if (!seen.has(event.id)) { await persistCanonical(event); seen.add(event.id); }
+    }
+    for await (const event of stream) {
+      if (event.type === "event_start" || event.type === "event_delta") continue;
+      if (++count > 1500) return { state: "window_limit" };
+      if (seen.has(event.id)) continue;
+      await persistCanonical(event); seen.add(event.id);
+      if (event.type === "session.status_idle") return { state: "idle", reason: event.stop_reason.type };
+    }
+    return { state: "incomplete" };
+  } finally { stream.controller.abort(); }
+}
+// Verify external webhook authenticity before ingest; trusted tenant/issuer/config
+// come from host records. Map is single-process teaching state, not durable storage.
+// Production needs a durable inbox/outbox, unique event key, atomic job claim,
+// bounded leases/concurrency, stored session IDs, reconciliation and resource rechecks.
+// persistCanonical appends evidence only; historical custom calls must not replay
+// business effects. Actual custom tools need authorization and business idempotency.
+// Local stream close does not stop remote work. A paused/idle session is not success.
+// Host cron is one scheduling option; native scheduled deployments also exist.
+// Stable UTC schedule occurrence IDs and [from,to) windows avoid overlap ambiguity.

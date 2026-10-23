@@ -1,0 +1,13 @@
+{
+  "lesson": "C56",
+  "title": "Durable, Scheduled and Event-driven Agents",
+  "path": "lesson-c56\\lesson-c56-app",
+  "port": 3056,
+  "scenarios": 3,
+  "state": "implemented and verified",
+  "liveScope": "text-only commentary about the local result",
+  "typecheck": true,
+  "localTests": true,
+  "browserSmoke": "passed: desktop, mobile, scenario controls, source view",
+  "liveCommentarySmoke": "passed: real text-only session reached end_turn"
+}
